@@ -640,6 +640,11 @@
   resolved "https://registry.yarnpkg.com/@types/stack-utils/-/stack-utils-2.0.0.tgz#7036640b4e21cc2f259ae826ce843d277dad8cff"
   integrity sha512-RJJrrySY7A8havqpGObOB4W92QXKJo63/jFLLgpvOtsGUqbQZ9Sbgl35KMm1DjC6j7AvmmU2bIno+3IyEaemaw==
 
+"@types/webassembly-web-api@^0.0.2":
+  version "0.0.2"
+  resolved "https://registry.yarnpkg.com/@types/webassembly-web-api/-/webassembly-web-api-0.0.2.tgz#d3abaffac50cadea76e39365274dc8bbff628668"
+  integrity sha512-yisQ0TwNmSBCkZOs1j4LQStkHsca82RlyLNBQ/hZi/DfNbPrptghXqg2iKpAP3fhb4bXYCPwuIs+KYTrYpagpA==
+
 "@types/yargs-parser@*":
   version "20.2.0"
   resolved "https://registry.yarnpkg.com/@types/yargs-parser/-/yargs-parser-20.2.0.tgz#dd3e6699ba3237f0348cd085e4698780204842f9"
@@ -1001,6 +1006,11 @@ bcrypt-pbkdf@^1.0.0:
   integrity sha1-pDAdOJtqQ/m2f/PKEaP2Y342Dp4=
   dependencies:
     tweetnacl "^0.14.3"
+
+binaryen@^100.0.0:
+  version "100.0.0"
+  resolved "https://registry.yarnpkg.com/binaryen/-/binaryen-100.0.0.tgz#8ed91955eff14eb4758d68d593869cbc1a9a0dff"
+  integrity sha512-nxOt8d8/VXAuSVEtAWUdKrqpqCy365QqD223EzzB1GzS5himiZAfM/R5lXx+M/5q8TB8cYp3tYxv5rTjNTJveQ==
 
 brace-expansion@^1.1.7:
   version "1.1.11"

@@ -2,6 +2,7 @@ import {Component, Controller, ComponentType, Field} from './component';
 import type {Dispatcher} from './dispatcher';
 import {Pool} from './pool';
 import {Type} from './type';
+import bin from 'binaryen';
 
 
 export type EntityId = number;
@@ -105,15 +106,16 @@ export class Entities {
   private readonly maxNum: number;
   private readonly stride: number;
   private nextId = 1;
-  private readonly currentBuffer: SharedArrayBuffer;
-  private readonly previousBuffer: SharedArrayBuffer;
-  private readonly mutationsBuffer: SharedArrayBuffer;
+  private readonly memory: WebAssembly.Memory;
+  private readonly wasm: WebAssembly.Instance;
+  private readonly flagSegmentSize: number;
+  private readonly filterSegmentSize: number;
   private readonly current: Uint32Array;
   private readonly previous: Uint32Array;
   private readonly mutations: Uint32Array;
+  private readonly filtered: Uint32Array;
   private readonly pool = new Pool(Entity);
   private readonly controllers: Map<ComponentType<any>, Controller<any>> = new Map();
-  readonly filledMask: number[];
 
   constructor(
     maxEntities: number, readonly types: ComponentType<any>[], readonly dispatcher: Dispatcher
@@ -125,11 +127,19 @@ export class Entities {
       this.controllers.set(type, new Controller(componentId++, type, this.maxNum, this.dispatcher));
     }
     this.stride = Math.ceil(this.controllers.size / 32);
-    const size = this.maxNum * this.stride * 4;
-    this.current = new Uint32Array(this.currentBuffer = new SharedArrayBuffer(size));
-    this.previous = new Uint32Array(this.previousBuffer = new SharedArrayBuffer(size));
-    this.mutations = new Uint32Array(this.mutationsBuffer = new SharedArrayBuffer(size));
-    this.filledMask = this.createFilledMask();
+    this.flagSegmentSize = this.maxNum * this.stride * 4;
+    this.filterSegmentSize = maxEntities * 4;
+    const blocks = Math.ceil((3 * this.flagSegmentSize + this.filterSegmentSize) / 2 ** 16);
+    this.memory = new WebAssembly.Memory({initial: blocks, maximum: blocks});
+    this.current =
+      new Uint32Array(this.memory.buffer, 0, this.maxNum * this.stride);
+    this.previous =
+      new Uint32Array(this.memory.buffer, this.flagSegmentSize, this.maxNum * this.stride);
+    this.mutations =
+      new Uint32Array(this.memory.buffer, 2 * this.flagSegmentSize, this.maxNum * this.stride);
+    this.filtered =
+      new Uint32Array(this.memory.buffer, 3 * this.flagSegmentSize, maxEntities);
+    this.wasm = this.generateWasmModule();
   }
 
   step(): void {
@@ -270,6 +280,23 @@ export class Entities {
     return true;
   }
 
+  iterateAll(withMask?: number[], withoutMask?: number[]): Iterable<Entity> {
+    const iterateAll = (this.wasm.exports.iterateAll as CallableFunction);
+    const numResults = iterateAll(this.flagSegmentSize, withMask?.[0] ?? 0, withoutMask?.[0] ?? 0);
+    return {
+      [Symbol.iterator]: () => {
+        let i = -1;
+        return {
+          next: () => {
+            if (i >= 0) this.dispatcher.flush();
+            if (++i >= numResults) return {done: true, value: undefined};
+            return {value: this.bind(this.filtered[i])};
+          }
+        };
+      }
+    };
+  }
+
   iterate(predicate: (id: EntityId) => boolean): Iterable<Entity> {
     const maxEntities = this.maxNum;
     // for (let id = 1; id < maxEntities; id++) {
@@ -298,6 +325,43 @@ export class Entities {
         };
       }
     };
+  }
 
+  generateWasmModule(): WebAssembly.Instance {
+    const module = bin.parseText(`(module
+      (import "js" "mem" (memory 1))
+      (func (export "iterateAll")
+        (param $segSize i32) (param $posMask i32) (param $negMask i32) (result i32)
+        (local $id i32) (local $numResults i32)
+        (local $currOffset i32) (local $prevOffset i32) (local $filtOffset i32)
+        (local.set $id (i32.const 1))
+        (local.set $numResults (i32.const 0))
+        (local.set $currOffset (i32.const 4))
+        (local.set $prevOffset (i32.add (local.get $segSize) (i32.const 4)))
+        (local.set $filtOffset (i32.mul (local.get $segSize) (i32.const 3)))
+        (block $break
+          (loop $top
+            (if
+              (i32.and
+                (i32.eq
+                  (i32.and (i32.load (local.get $currOffset)) (local.get $posMask))
+                  (local.get $posMask))
+                (i32.eqz (i32.and (i32.load (local.get $currOffset)) (local.get $negMask))))
+              (then
+                (i32.store (local.get $filtOffset) (local.get $id))
+                (local.set $numResults (i32.add (local.get $numResults) (i32.const 1)))
+                (local.set $filtOffset (i32.add (local.get $filtOffset) (i32.const 4)))))
+            (local.set $id (i32.add (local.get $id) (i32.const 1)))
+            (local.set $currOffset (i32.add (local.get $currOffset) (i32.const 4)))
+            (local.set $prevOffset (i32.add (local.get $prevOffset) (i32.const 4)))
+            (br_if $break (i32.eq (local.get $currOffset) (local.get $segSize)))
+            (br $top)
+          )
+        )
+        (local.get $numResults)
+      )
+    )`);
+    return new WebAssembly.Instance(
+      new WebAssembly.Module(module.emitBinary()), {js: {mem: this.memory}});
   }
 }

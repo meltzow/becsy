@@ -126,9 +126,7 @@ export class MainQuery extends Query {
 
   get all(): Iterable<Entity> {
     const entities = this.__system.__dispatcher.entities;
-    return entities.iterate(
-      id => entities.matchCurrent(id, this.__withMask, this.__withoutMask),
-    );
+    return entities.iterateAll(this.__withMask, this.__withoutMask);
   }
 
   get added(): Iterable<Entity> {
