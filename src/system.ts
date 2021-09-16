@@ -6,7 +6,7 @@ import type {World} from './world';  // eslint-disable-line @typescript-eslint/n
 import {Query, QueryBox, QueryBuilder} from './query';
 import type {ComponentType} from './component';
 import {
-  GroupContentsArray, Schedule, ScheduleBuilder, SystemGroup, SystemGroupImpl
+  GroupContentsArray, Lane, Schedule, ScheduleBuilder, SystemGroup, SystemGroupImpl
 } from './schedules';
 
 
@@ -35,13 +35,20 @@ class Placeholder {
 export abstract class System {
   static readonly __system = true;
 
-  // TODO: document
+  /**
+   * Create a group of systems that can be scheduled collectively, or used in
+   * {@link World.createCustomExecutor} to execute a subset of all the system in a frame.
+   * @param systemTypes System classes, each optionally followed by an object to initialize the
+   *  system's properties.
+   * @returns A group of the given systems.
+   */
   static group(...systemTypes: GroupContentsArray): SystemGroup {
     return new SystemGroupImpl(systemTypes);
   }
 
   __queryBuilders: QueryBuilder[] | null = [];
   __scheduleBuilder: ScheduleBuilder | undefined | null;
+  __placeholders: Placeholder[] | null = [];
   __dispatcher: Dispatcher;
 
   /**
@@ -130,7 +137,9 @@ export abstract class System {
    * @returns The unique instance of the system of the given type that exists in the world.
    */
   attach<S extends System>(systemType: SystemType<S>): S {
-    return new Placeholder(systemType) as unknown as S;
+    const placeholder = new Placeholder(systemType);
+    this.__placeholders!.push(placeholder);
+    return placeholder as unknown as S;
   }
 
   /**
@@ -190,6 +199,7 @@ export class SystemBox {
   private shapeLogPointer: LogPointer;
   private writeLogPointer?: LogPointer;
   private state: RunState = RunState.RUNNING;
+  lane?: Lane;
 
   get id(): number {return this.system.id;}
   get name(): string {return this.system.name;}
@@ -229,6 +239,12 @@ export class SystemBox {
         (this.system as any)[prop] = targetSystem.system;
       }
     }
+    this.system.__placeholders = null;
+  }
+
+  get attachedSystems(): (SystemBox | undefined)[] {
+    return this.system.__placeholders!.map(
+      placeholder => this.dispatcher.systemsByClass.get(placeholder.type));
   }
 
   prepare(): Promise<void> {

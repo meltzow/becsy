@@ -44,6 +44,11 @@ export class ScheduleBuilder {
     }
   }
 
+  onMainThread(): this {
+    this.__dispatcher.planner.lanes[0]?.add(...this.__systems);
+    return this;
+  }
+
   /**
    * Schedule this system before all the given ones (highest priority).
    * @param systemTypes The systems or groups that this one should precede.
@@ -386,10 +391,37 @@ class ThreadedPlan extends Plan {
 }
 
 
+export class Lane {
+  private static count = 0;
+
+  readonly id: number;
+  readonly systems: SystemBox[];
+
+  constructor() {
+    this.id = Lane.count++;
+  }
+
+  add(...systems: SystemBox[]): void {
+    for (const system of systems) system.lane = this;
+    this.systems.push(...systems);
+  }
+
+  merge(other: Lane): Lane {
+    if (this === other) return this;
+    if (other.id < this.id) return other.merge(this);
+    this.add(...other.systems);
+    other.systems.length = 0;
+    return this;
+  }
+
+}
+
+
 export class Planner {
   readonly graph: Graph<SystemBox>;
   readers? = new Map<ComponentType<Component>, Set<SystemBox>>();
   writers? = new Map<ComponentType<Component>, Set<SystemBox>>();
+  lanes: Lane[] = [];
 
   constructor(
     readonly dispatcher: Dispatcher, private readonly systems: SystemBox[],
@@ -400,6 +432,7 @@ export class Planner {
       this.readers!.set(componentType, new Set());
       this.writers!.set(componentType, new Set());
     }
+    if (dispatcher.threaded) this.lanes.push(new Lane());
   }
 
   organize(): void {
@@ -407,6 +440,17 @@ export class Planner {
     for (const system of this.systems) system.buildQueries();
     for (const system of this.systems) system.buildSchedule();
     for (const group of this.groups) group.__buildSchedule();
+    this.addComponentReaderWriterDependencies();
+    if (this.dispatcher.threaded) this.assignSystemsToLanes();
+    delete this.readers;
+    delete this.writers;
+    for (const group of this.groups) {
+      group.__plan =
+        this.dispatcher.threaded ? new ThreadedPlan(this, group) : new SimplePlan(this, group);
+    }
+  }
+
+  private addComponentReaderWriterDependencies(): void {
     for (const [componentType, systems] of this.readers!.entries()) {
       for (const reader of systems) {
         for (const writer of this.writers!.get(componentType)!) {
@@ -414,12 +458,49 @@ export class Planner {
         }
       }
     }
-    delete this.readers;
-    delete this.writers;
-    for (const group of this.groups) {
-      group.__plan =
-        this.dispatcher.threaded ? new ThreadedPlan(this, group) : new SimplePlan(this, group);
+  }
+
+  private assignSystemsToLanes(): void {
+    this.initSystemLanes();
+    this.mergeReadersOfUnsharedComponentTypes();
+    this.mergeAttachedSystems();
+    this.pruneEmptyLanes();
+  }
+
+  private initSystemLanes(): void {
+    for (const system of this.systems) {
+      if (!system.lane) {
+        const lane = new Lane();
+        lane.add(system);
+        this.lanes.push(lane);
+      }
     }
+  }
+
+  private mergeReadersOfUnsharedComponentTypes(): void {
+    for (const componentType of this.dispatcher.registry.types) {
+      if (componentType.__binding!.fields.every(field => field.type.shared)) continue;
+      const readers = this.readers!.get(componentType);
+      if (!readers) continue;
+      let lane = new Lane();
+      this.lanes.push(lane);
+      readers.forEach(system => {
+        lane = lane.merge(system.lane!);
+      });
+    }
+  }
+
+  private mergeAttachedSystems(): void {
+    for (const system of this.systems) {
+      for (const attachedSystem of system.attachedSystems) {
+        if (!attachedSystem) continue;
+        system.lane!.merge(attachedSystem.lane!);
+      }
+    }
+  }
+
+  private pruneEmptyLanes(): void {
+    this.lanes = this.lanes.filter(lane => lane.systems.length);
   }
 
 }
