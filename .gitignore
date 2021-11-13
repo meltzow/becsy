@@ -7,6 +7,7 @@ node_modules/
 
 /.gitconfig
 /.vscode/
+/.idea
 /.clinic/
 /yarn-error.log
 /tsconfig.tsbuildinfo
